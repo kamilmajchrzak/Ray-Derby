@@ -1,154 +1,151 @@
+// Falling objects demo using raylib + Bullet Physics + custom lighting shader
+// Requirements: raylib compiled with OpenGL 3.3 and Bullet Physics installed
+
 #include <raylib.h>
 #include <raymath.h>
 #include <rlgl.h>
 #include <btBulletDynamicsCommon.h>
 #include <vector>
-#include <memory>
 #include <cstdlib>
 #include <ctime>
 
 struct RigidBodyData {
+    enum Type { BOX, SPHERE, CYLINDER, CONE, CAPSULE } type;
     btRigidBody* body;
-    enum Type { BOX, SPHERE } type;
     Color color;
+    float scale;
 };
 
 std::vector<RigidBodyData> objects;
+btDiscreteDynamicsWorld* world;
+Model models[5];
 
-btDiscreteDynamicsWorld* world = nullptr;
+// Random float
+float RandRange(float min, float max) {
+    return min + ((float)rand() / RAND_MAX) * (max - min);
+}
 
-void AddRandomObject(btDiscreteDynamicsWorld* world) {
-    float x = ((float)(rand() % 10) - 5.0f);
-    float z = ((float)(rand() % 10) - 5.0f);
-    float y = 10.0f;
-
-    bool isSphere = rand() % 2;
-
-    btCollisionShape* shape = isSphere ?
-        static_cast<btCollisionShape*>(new btSphereShape(0.5f)) :
-        static_cast<btCollisionShape*>(new btBoxShape(btVector3(0.5f, 0.5f, 0.5f)));
-
-    // Losowa rotacja (Euler XYZ → Quaternion)
-    float angleX = ((float)(rand() % 360)) * DEG2RAD;
-    float angleY = ((float)(rand() % 360)) * DEG2RAD;
-    float angleZ = ((float)(rand() % 360)) * DEG2RAD;
-
-    Quaternion q = QuaternionFromEuler(angleX, angleY, angleZ);
-    btQuaternion btQ(q.x, q.y, q.z, q.w);
-
-    btDefaultMotionState* motionState = new btDefaultMotionState(
-        btTransform(btQ, btVector3(x, y, z))
-    );
-
-    btScalar mass = 1.0f;
+btRigidBody* CreateRigidBody(btCollisionShape* shape, float mass, const btTransform& transform) {
     btVector3 inertia(0, 0, 0);
-    shape->calculateLocalInertia(mass, inertia);
-
+    if (mass != 0.0f) shape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motionState = new btDefaultMotionState(transform);
     btRigidBody::btRigidBodyConstructionInfo info(mass, motionState, shape, inertia);
-    btRigidBody* body = new btRigidBody(info);
+    return new btRigidBody(info);
+}
+
+void AddRandomObject() {
+    float scale = RandRange(0.5f, 2.0f);
+    int shapeType = GetRandomValue(0, 4);
+    btCollisionShape* shape = nullptr;
+
+    btTransform transform;
+    transform.setIdentity();
+    transform.setOrigin(btVector3(RandRange(-5, 5), 15, RandRange(-5, 5)));
+
+    // Random rotation
+    btQuaternion rotation;
+    rotation.setEuler(RandRange(0, PI), RandRange(0, PI), RandRange(0, PI));
+    transform.setRotation(rotation);
+
+    RigidBodyData::Type type = static_cast<RigidBodyData::Type>(shapeType);
+
+    switch (type) {
+        case RigidBodyData::BOX:
+            shape = new btBoxShape(btVector3(scale, scale, scale));
+            break;
+        case RigidBodyData::SPHERE:
+            shape = new btSphereShape(scale);
+            break;
+        case RigidBodyData::CYLINDER:
+            shape = new btCylinderShape(btVector3(scale, scale, scale));
+            break;
+        case RigidBodyData::CONE:
+            shape = new btConeShape(scale, scale * 2);
+            break;
+        case RigidBodyData::CAPSULE:
+            shape = new btCapsuleShape(scale, scale);
+            break;
+    }
+
+    btRigidBody* body = CreateRigidBody(shape, 1.0f, transform);
     world->addRigidBody(body);
 
-    // Losowy kolor
-    Color c = Color{
-        (unsigned char)(100 + rand() % 156),
-        (unsigned char)(100 + rand() % 156),
-        (unsigned char)(100 + rand() % 156),
-        255
-    };
+    Color color = ColorFromHSV(GetRandomValue(0, 360), 0.8f, 0.8f);
 
-    objects.push_back({body, isSphere ? RigidBodyData::SPHERE : RigidBodyData::BOX, c});
+    objects.push_back({type, body, color, scale});
 }
 
 int main() {
     srand(time(nullptr));
-
-    InitWindow(1280, 720, "raylib + Bullet demo");
-
-    Shader lighting = LoadShader("shaders/lighting.vs", "shaders/lighting.fs");
-
-    // Setup uniform locations
-    int viewPosLoc = GetShaderLocation(lighting, "viewPos");
-    int lightPosLoc = GetShaderLocation(lighting, "lightPos");
-    int lightColorLoc = GetShaderLocation(lighting, "lightColor");
-
-    Model cubeModel = LoadModelFromMesh(GenMeshCube(1, 1, 1));
-    cubeModel.materials[0].shader = lighting;
-
-    Model sphereModel = LoadModelFromMesh(GenMeshSphere(0.5f, 16, 16));
-    sphereModel.materials[0].shader = lighting;
-
+    InitWindow(1280, 800, "Falling Objects + Bullet + Lighting");
     SetTargetFPS(60);
 
-    //Lights
-
-    Vector3 lightPos[5] = {
-        { 5, 10, 5 },
-        {-5, 10, 5 },
-        { 5, 10, -5 },
-        {-5, 10, -5 },
-        { 0, 12,  0 }
-    };
-
-    Color lightColors[5] = {
-        RED, GREEN, BLUE, YELLOW, PURPLE
-    };
-
-    // Raz na start:
-    Vector3 lightColorVecs[5];
-    for (int i = 0; i < 5; i++) {
-        lightColorVecs[i] = Vector3{
-            lightColors[i].r / 255.0f,
-            lightColors[i].g / 255.0f,
-            lightColors[i].b / 255.0f
-        };
-    }
-
-
-    Camera3D camera = { 0 };
-    camera.position = Vector3{ 10.0f, 10.0f, 10.0f };
-    camera.target = Vector3{ 0.0f, 0.0f, 0.0f };
-    camera.up = Vector3{ 0.0f, 1.0f, 0.0f };
+    Camera3D camera = {0};
+    camera.position = { 15.0f, 15.0f, 15.0f };
+    camera.target = { 0.0f, 0.0f, 0.0f };
+    camera.up = { 0.0f, 1.0f, 0.0f };
     camera.fovy = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
 
-    // Bullet physics setup
+    Shader lighting = LoadShader("shaders/lighting.vs", "shaders/lighting.fs");
+    int viewPosLoc = GetShaderLocation(lighting, "viewPos");
+    int ambientLoc = GetShaderLocation(lighting, "ambient");
+    int lightPosLoc = GetShaderLocation(lighting, "lightPos[0]");
+    int lightColorLoc = GetShaderLocation(lighting, "lightColor[0]");
+
+    float ambient[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+    SetShaderValue(lighting, ambientLoc, ambient, SHADER_UNIFORM_VEC4);
+
+    Vector3 lightPos[5] = {
+        {10, 10, 10}, {-10, 10, 10}, {10, 10, -10}, {-10, 10, -10}, {0, 20, 0}
+    };
+    Vector3 lightColor[5] = {
+        {1, 0.9f, 0.8f}, {0.8f, 0.8f, 1}, {1, 0.6f, 0.6f}, {0.6f, 1, 0.6f}, {0.9f, 0.9f, 1}
+    };
+
+    SetShaderValueV(lighting, lightPosLoc, &lightPos[0].x, SHADER_UNIFORM_VEC3, 5);
+    SetShaderValueV(lighting, lightColorLoc, &lightColor[0].x, SHADER_UNIFORM_VEC3, 5);
+
+    Mesh meshCube = GenMeshCube(1, 1, 1);
+    Mesh meshSphere = GenMeshSphere(1, 16, 16);
+    Mesh meshCyl = GenMeshCylinder(1, 2, 16);
+    Mesh meshCone = GenMeshCone(1, 2, 16);
+    Mesh meshCapsule = GenMeshSphere(1, 16, 16); // fallback
+
+    models[RigidBodyData::BOX] = LoadModelFromMesh(meshCube);
+    models[RigidBodyData::SPHERE] = LoadModelFromMesh(meshSphere);
+    models[RigidBodyData::CYLINDER] = LoadModelFromMesh(meshCyl);
+    models[RigidBodyData::CONE] = LoadModelFromMesh(meshCone);
+    models[RigidBodyData::CAPSULE] = LoadModelFromMesh(meshCapsule);
+
+    for (int i = 0; i < 5; i++) models[i].materials[0].shader = lighting;
+
+    // Physics init
     btBroadphaseInterface* broadphase = new btDbvtBroadphase();
     btDefaultCollisionConfiguration* collisionConfig = new btDefaultCollisionConfiguration();
     btCollisionDispatcher* dispatcher = new btCollisionDispatcher(collisionConfig);
-    btSequentialImpulseConstraintSolver* solver = new btSequentialImpulseConstraintSolver;
-
+    btSequentialImpulseConstraintSolver* solver = new btSequentialImpulseConstraintSolver();
     world = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
     world->setGravity(btVector3(0, -9.81f, 0));
 
-    // Ground plane
-    btCollisionShape* groundShape = new btBoxShape(btVector3(20.0f, 0.5f, 20.0f));
-    btDefaultMotionState* groundMotionState = new btDefaultMotionState(
-        btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, -0.5f, 0))
-    );
-    btRigidBody::btRigidBodyConstructionInfo groundInfo(0, groundMotionState, groundShape);
-    btRigidBody* ground = new btRigidBody(groundInfo);
+    btCollisionShape* groundShape = new btBoxShape(btVector3(20, 1, 20));
+    btRigidBody* ground = CreateRigidBody(groundShape, 0.0f, btTransform(btQuaternion(0,0,0,1), btVector3(0, -1, 0)));
     world->addRigidBody(ground);
 
     while (!WindowShouldClose()) {
-        if (IsKeyPressed(KEY_SPACE)) {
-            AddRandomObject(world);
-        }
+        if (IsKeyPressed(KEY_SPACE)) AddRandomObject();
 
         world->stepSimulation(GetFrameTime(), 10);
 
-        //Uniform update
-        Vector3 camPos = camera.position;
-        SetShaderValue(lighting, viewPosLoc, &camPos, SHADER_UNIFORM_VEC3);
-        SetShaderValueV(lighting, lightPosLoc, lightPos, SHADER_UNIFORM_VEC3, 5);
-        SetShaderValueV(lighting, lightColorLoc, lightColorVecs, SHADER_UNIFORM_VEC3, 5);
+        float viewPos[3] = { camera.position.x, camera.position.y, camera.position.z };
+        SetShaderValue(lighting, viewPosLoc, viewPos, SHADER_UNIFORM_VEC3);
 
         BeginDrawing();
         ClearBackground(BLACK);
 
         BeginMode3D(camera);
-
-        DrawGrid(20, 1.0f);
-        DrawCube(Vector3{0, -0.5f, 0}, 40, 1, 40, LIGHTGRAY);
+        DrawCube({0, -1.0f, 0}, 40, 2, 40, DARKGRAY);
+        DrawGrid(40, 1.0f);
 
         for (const auto& obj : objects) {
             btTransform trans;
@@ -156,51 +153,25 @@ int main() {
             btVector3 pos = trans.getOrigin();
             btQuaternion rot = trans.getRotation();
 
-            Vector3 p = {pos.x(), pos.y(), pos.z()};
-            Quaternion q = {rot.x(), rot.y(), rot.z(), rot.w()};
+            Vector3 p = { pos.x(), pos.y(), pos.z() };
+            Quaternion q = { rot.x(), rot.y(), rot.z(), rot.w() };
+            Matrix mat = QuaternionToMatrix(q);
+            mat.m12 = p.x;
+            mat.m13 = p.y;
+            mat.m14 = p.z;
 
-            Model& model = (obj.type == RigidBodyData::SPHERE) ? sphereModel : cubeModel;
-
-            // Ustaw kolor dla tego obiektu
-            model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = obj.color;
-
-
-            /*float lightStrength = Clamp(1.0f - (p.y / 10.0f), 0.4f, 1.0f);
-            Color litColor = {
-                (unsigned char)(obj.color.r * lightStrength),
-                (unsigned char)(obj.color.g * lightStrength),
-                (unsigned char)(obj.color.b * lightStrength),
-                255
-            };*/
-
-            if (obj.type == RigidBodyData::BOX) {
-                rlPushMatrix();
-
-                // Zbuduj macierz transformacji z rotacji i pozycji
-                Matrix m = QuaternionToMatrix(q);
-                m.m12 = p.x;
-                m.m13 = p.y;
-                m.m14 = p.z;
-
-                rlMultMatrixf(MatrixToFloat(m));
-
-                DrawCube(Vector3Zero(), 1, 1, 1, obj.color);
-                //DrawModelEx(model, p, Vector3Normalize({q.x, q.y, q.z}), QuaternionLength(q) * RAD2DEG, Vector3{1,1,1}, WHITE);
-                rlPopMatrix();
-            } else {
-                // Sfery i tak nie mają orientacji, więc zwykły DrawSphere
-                DrawSphereEx(p, 0.5f, 16, 16, obj.color);
-                //DrawModelEx(model, p, Vector3Normalize({q.x, q.y, q.z}), QuaternionLength(q) * RAD2DEG, Vector3{1,1,1}, WHITE);
-            }
+            rlPushMatrix();
+            rlMultMatrixf(MatrixToFloat(mat));
+            DrawModel(models[obj.type], {0, 0, 0}, obj.scale, obj.color);
+            rlPopMatrix();
         }
 
         EndMode3D();
 
-        DrawText("Press SPACE to drop a cube or sphere", 10, 10, 20, DARKGRAY);
+        DrawText("Press SPACE to spawn random object", 10, 10, 20, RAYWHITE);
         EndDrawing();
     }
 
-    // Cleanup (minimal for demo)
     CloseWindow();
     return 0;
 }
