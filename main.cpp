@@ -16,6 +16,7 @@ struct RigidBodyData {
     float scale;
 };
 
+
 std::vector<RigidBodyData> objects;
 btDiscreteDynamicsWorld* world;
 Model models[5];
@@ -77,7 +78,8 @@ void AddRandomObject() {
 
 int main() {
     srand(time(nullptr));
-    InitWindow(1280, 800, "Falling Objects + Bullet + Lighting");
+    InitWindow(GetMonitorWidth(GetCurrentMonitor()), GetMonitorHeight(GetCurrentMonitor()), "Falling Objects + Bullet + Lighting");
+    ToggleFullscreen();
     SetTargetFPS(60);
 
     Camera3D camera = {0};
@@ -87,13 +89,29 @@ int main() {
     camera.fovy = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
 
-    Shader lighting = LoadShader("shaders/lighting.vs", "shaders/lighting.fs");
+    Shader lighting = LoadShader("../shaders/lighting.vert", "../shaders/lighting.frag");
+
+
+    // ️ KRYTYCZNE: Sprawdź czy shader się skompilował
+    if (lighting.id == 0) {
+        TraceLog(LOG_ERROR, "Shader compilation failed!");
+        //CloseWindow();
+        return -1;
+    }
+
+    // 🔥 USTAWIAMY LOKACJE ATRYBUTÓW — bez tego shader NIE DZIAŁA POPRAWNIE!
+    lighting.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(lighting, "vertexPosition");
+
+    lighting.locs[SHADER_LOC_VERTEX_NORMAL] = GetShaderLocationAttrib(lighting, "vertexNormal");
+
     int viewPosLoc = GetShaderLocation(lighting, "viewPos");
     int ambientLoc = GetShaderLocation(lighting, "ambient");
     int lightPosLoc = GetShaderLocation(lighting, "lightPos[0]");
     int lightColorLoc = GetShaderLocation(lighting, "lightColor[0]");
+    int colDiffuseLoc = GetShaderLocation(lighting, "colDiffuse");
 
     float ambient[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+
     SetShaderValue(lighting, ambientLoc, ambient, SHADER_UNIFORM_VEC4);
 
     Vector3 lightPos[5] = {
@@ -107,10 +125,24 @@ int main() {
     SetShaderValueV(lighting, lightColorLoc, &lightColor[0].x, SHADER_UNIFORM_VEC3, 5);
 
     Mesh meshCube = GenMeshCube(1, 1, 1);
+    UploadMesh(&meshCube, false);
+    GenMeshTangents(&meshCube);
+
     Mesh meshSphere = GenMeshSphere(1, 16, 16);
+    // UploadMesh(&meshSphere, false);
+    // GenMeshTangents(&meshSphere);
+
     Mesh meshCyl = GenMeshCylinder(1, 2, 16);
+    UploadMesh(&meshCyl, false);
+    GenMeshTangents(&meshCyl);
+
     Mesh meshCone = GenMeshCone(1, 2, 16);
+    UploadMesh(&meshCone, false);
+    GenMeshTangents(&meshCone);
+
     Mesh meshCapsule = GenMeshSphere(1, 16, 16); // fallback
+    UploadMesh(&meshCapsule, false);
+    GenMeshTangents(&meshCapsule);
 
     models[RigidBodyData::BOX] = LoadModelFromMesh(meshCube);
     models[RigidBodyData::SPHERE] = LoadModelFromMesh(meshSphere);
@@ -160,6 +192,16 @@ int main() {
             mat.m13 = p.y;
             mat.m14 = p.z;
 
+            // Przekazujemy kolor obiektu jako colDiffuse
+
+            float colDiffuse[4] = {
+                (float)obj.color.r / 255.0f,
+                (float)obj.color.g / 255.0f,
+                (float)obj.color.b / 255.0f,
+                (float)obj.color.a / 255.0f
+            };
+
+            SetShaderValue(lighting, colDiffuseLoc, colDiffuse, SHADER_UNIFORM_VEC4);
             rlPushMatrix();
             rlMultMatrixf(MatrixToFloat(mat));
             DrawModel(models[obj.type], {0, 0, 0}, obj.scale, obj.color);
