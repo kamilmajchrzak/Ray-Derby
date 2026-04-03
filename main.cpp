@@ -78,8 +78,8 @@ void AddRandomObject() {
 
 int main() {
     srand(time(nullptr));
-    InitWindow(GetMonitorWidth(GetCurrentMonitor()), GetMonitorHeight(GetCurrentMonitor()), "Falling Objects + Bullet + Lighting");
-    ToggleFullscreen();
+    InitWindow(640, 480, "Falling Objects + Bullet + Lighting");
+    //ToggleFullscreen();
     SetTargetFPS(60);
 
     Camera3D camera = {0};
@@ -99,15 +99,15 @@ int main() {
         return -1;
     }
 
-    // 🔥 USTAWIAMY LOKACJE ATRYBUTÓW — bez tego shader NIE DZIAŁA POPRAWNIE!
     lighting.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(lighting, "vertexPosition");
 
     lighting.locs[SHADER_LOC_VERTEX_NORMAL] = GetShaderLocationAttrib(lighting, "vertexNormal");
 
+    //uniforms
     int viewPosLoc = GetShaderLocation(lighting, "viewPos");
     int ambientLoc = GetShaderLocation(lighting, "ambient");
-    int lightPosLoc = GetShaderLocation(lighting, "lightPos[0]");
-    int lightColorLoc = GetShaderLocation(lighting, "lightColor[0]");
+    int lightPosLoc = GetShaderLocation(lighting, "lightPos[5]");
+    int lightColorLoc = GetShaderLocation(lighting, "lightColor[5]");
     int colDiffuseLoc = GetShaderLocation(lighting, "colDiffuse");
 
     float ambient[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
@@ -115,42 +115,46 @@ int main() {
     SetShaderValue(lighting, ambientLoc, ambient, SHADER_UNIFORM_VEC4);
 
     Vector3 lightPos[5] = {
-        {10, 10, 10}, {-10, 10, 10}, {10, 10, -10}, {-10, 10, -10}, {0, 20, 0}
+        {10, 10, 10},
+        {-10, 10, 10},
+        {10, 10, -10},
+        {-10, 10, -10},
+        {0, 20, 0}
     };
     Vector3 lightColor[5] = {
-        {1, 0.9f, 0.8f}, {0.8f, 0.8f, 1}, {1, 0.6f, 0.6f}, {0.6f, 1, 0.6f}, {0.9f, 0.9f, 1}
+        {1, 0.9f, 0.8f},
+        {0.8f, 0.8f, 1},
+        {1, 0.6f, 0.6f},
+        {0.6f, 1, 0.6f},
+        {0.9f, 0.9f, 1}
     };
 
     SetShaderValueV(lighting, lightPosLoc, &lightPos[0].x, SHADER_UNIFORM_VEC3, 5);
     SetShaderValueV(lighting, lightColorLoc, &lightColor[0].x, SHADER_UNIFORM_VEC3, 5);
 
     Mesh meshCube = GenMeshCube(1, 1, 1);
-    UploadMesh(&meshCube, false);
-    GenMeshTangents(&meshCube);
+    models[RigidBodyData::BOX] = LoadModelFromMesh(meshCube);
 
     Mesh meshSphere = GenMeshSphere(1, 16, 16);
-    // UploadMesh(&meshSphere, false);
-    // GenMeshTangents(&meshSphere);
+    models[RigidBodyData::SPHERE] = LoadModelFromMesh(meshSphere);
 
     Mesh meshCyl = GenMeshCylinder(1, 2, 16);
-    UploadMesh(&meshCyl, false);
-    GenMeshTangents(&meshCyl);
+    models[RigidBodyData::CYLINDER] = LoadModelFromMesh(meshCyl);
 
     Mesh meshCone = GenMeshCone(1, 2, 16);
-    UploadMesh(&meshCone, false);
-    GenMeshTangents(&meshCone);
-
-    Mesh meshCapsule = GenMeshSphere(1, 16, 16); // fallback
-    UploadMesh(&meshCapsule, false);
-    GenMeshTangents(&meshCapsule);
-
-    models[RigidBodyData::BOX] = LoadModelFromMesh(meshCube);
-    models[RigidBodyData::SPHERE] = LoadModelFromMesh(meshSphere);
-    models[RigidBodyData::CYLINDER] = LoadModelFromMesh(meshCyl);
     models[RigidBodyData::CONE] = LoadModelFromMesh(meshCone);
+
+    // Poprawiony generator kapsuły (wcześniej była sferą)
+    Mesh meshCapsule = GenMeshSphere(1, 16, 16);
     models[RigidBodyData::CAPSULE] = LoadModelFromMesh(meshCapsule);
 
-    for (int i = 0; i < 5; i++) models[i].materials[0].shader = lighting;
+    // Przypisanie shadera
+    for (int i = 0; i < 5; i++) {
+        models[i].materials[0].shader = lighting;
+        // Ważne: Ustaw domyślny kolor materiału, żeby nie był czarny
+        models[i].materials[0].maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+    }
+
 
     // Physics init
     btBroadphaseInterface* broadphase = new btDbvtBroadphase();
@@ -164,6 +168,9 @@ int main() {
     btRigidBody* ground = CreateRigidBody(groundShape, 0.0f, btTransform(btQuaternion(0,0,0,1), btVector3(0, -1, 0)));
     world->addRigidBody(ground);
 
+    TraceLog(LOG_INFO, "BOX: vertices=%d, triangles=%d", models[RigidBodyData::BOX].meshes[0].vertexCount, models[RigidBodyData::BOX].meshes[0].triangleCount);
+    TraceLog(LOG_INFO, "SPHERE: vertices=%d, triangles=%d", models[RigidBodyData::SPHERE].meshes[0].vertexCount, models[RigidBodyData::SPHERE].meshes[0].triangleCount);
+
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_SPACE)) AddRandomObject();
 
@@ -171,7 +178,8 @@ int main() {
 
         float viewPos[3] = { camera.position.x, camera.position.y, camera.position.z };
         SetShaderValue(lighting, viewPosLoc, viewPos, SHADER_UNIFORM_VEC3);
-
+        //rlEnableBackfaceCulling();
+        rlDisableBackfaceCulling();
         BeginDrawing();
         ClearBackground(BLACK);
 
@@ -179,7 +187,8 @@ int main() {
         DrawCube({0, -1.0f, 0}, 40, 2, 40, DARKGRAY);
         DrawGrid(40, 1.0f);
 
-        for (const auto& obj : objects) {
+        for (const auto& obj : objects)
+            {
             btTransform trans;
             obj.body->getMotionState()->getWorldTransform(trans);
             btVector3 pos = trans.getOrigin();
